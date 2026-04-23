@@ -386,20 +386,26 @@ async function extractContent(file) {
         pageCanvases.push(canvas);
       }
 
-      // Group pages into batches that fit under 4MB when stitched
+      // Group pages into batches that fit under 4MB and 7000px tall
+      const MAX_HEIGHT = 7000;
       const batches = [];
       let batchCanvases = [];
       let batchBytes = 0;
+      let batchHeight = 0;
 
       for (const canvas of pageCanvases) {
         const bytes = canvas.toDataURL('image/jpeg', 0.82).length * 0.75;
-        if (batchBytes + bytes > MAX_BYTES && batchCanvases.length > 0) {
+        const wouldExceedSize = batchBytes + bytes > MAX_BYTES;
+        const wouldExceedHeight = batchHeight + canvas.height > MAX_HEIGHT;
+        if ((wouldExceedSize || wouldExceedHeight) && batchCanvases.length > 0) {
           batches.push(batchCanvases);
           batchCanvases = [];
           batchBytes = 0;
+          batchHeight = 0;
         }
         batchCanvases.push(canvas);
         batchBytes += bytes;
+        batchHeight += canvas.height;
       }
       if (batchCanvases.length > 0) batches.push(batchCanvases);
 
