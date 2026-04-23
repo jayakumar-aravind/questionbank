@@ -461,7 +461,7 @@ Example output:
     messages = [{ role: 'user', content: content.data }];
   }
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetch('https://anthropic-proxy.jayakumar-aravind.workers.dev', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
