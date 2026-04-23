@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maths Question Bank</title>
+<link rel="stylesheet" href="style.css">
+<!-- PDF.js for PDF extraction -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- Mammoth for Word doc extraction -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+</head>
+<body>
+
+<div class="app">
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">
+        <svg viewBox="0 0 16 16"><path d="M2 3h12v2H2zm0 4h8v2H2zm0 4h10v2H2z"/></svg>
+      </div>
+      <h1>Maths Question Bank</h1>
+      <span class="stat-badge" id="total-badge">0 questions</span>
+    </div>
+    <nav class="header-nav">
+      <button class="nav-btn active" onclick="showTab('upload')">Upload</button>
+      <button class="nav-btn" onclick="showTab('bank')">Question Bank</button>
+      <button class="nav-btn" onclick="showTab('generate')">Generate Sheet</button>
+      <button class="nav-btn" onclick="showTab('settings')">Settings</button>
+    </nav>
+  </div>
+
+  <div class="main">
+
+    <!-- UPLOAD TAB -->
+    <div id="tab-upload">
+      <div id="firebase-config-section"></div>
+      <div class="upload-zone" id="drop-zone"
+        onclick="document.getElementById('file-input').click()"
+        ondragover="handleDragOver(event)"
+        ondragleave="handleDragLeave(event)"
+        ondrop="handleDrop(event)">
+        <div class="upload-icon">
+          <svg viewBox="0 0 24 24" stroke-width="1.5" fill="none" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
+          </svg>
+        </div>
+        <h2>Upload a maths worksheet</h2>
+        <p>Drop your file here or click to browse</p>
+        <div class="format-pills">
+          <span class="pill">PDF</span>
+          <span class="pill">Word (.docx)</span>
+          <span class="pill">JPG / PNG (scanned)</span>
+        </div>
+        <input type="file" id="file-input" accept=".pdf,.docx,.jpg,.jpeg,.png" onchange="handleFileSelect(event)">
+      </div>
+      <div id="processing-area"></div>
+    </div>
+
+    <!-- BANK TAB -->
+    <div id="tab-bank" style="display:none">
+      <div class="bank-header">
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" stroke-width="2" fill="none" stroke="currentColor">
+            <circle cx="11" cy="11" r="8"/><path stroke-linecap="round" d="m21 21-4.35-4.35"/>
+          </svg>
+          <input type="text" id="search-input" placeholder="Search questions..." oninput="filterQuestions()">
+        </div>
+        <div class="filter-row">
+          <select id="filter-topic" onchange="filterQuestions()"><option value="">All topics</option></select>
+          <select id="filter-pattern" onchange="filterQuestions()"><option value="">All patterns</option></select>
+          <select id="filter-diff" onchange="filterQuestions()">
+            <option value="">Any difficulty</option>
+            <option value="1">1 – Easiest</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5 – Hardest</option>
+          </select>
+          <select id="filter-age" onchange="filterQuestions()">
+            <option value="">All ages</option>
+            <option value="Primary">Primary (5–11)</option>
+            <option value="Secondary">Secondary / GCSE</option>
+          </select>
+        </div>
+      </div>
+      <div id="selection-bar-container"></div>
+      <div class="results-info" id="results-info"></div>
+      <div class="questions-grid" id="questions-grid"></div>
+    </div>
+
+    <!-- GENERATE TAB -->
+    <div id="tab-generate" style="display:none">
+      <div class="gen-card">
+        <p class="section-title">Practice sheet generator</p>
+        <div class="gen-form">
+          <div class="form-group">
+            <label>Topic</label>
+            <select id="gen-topic"><option value="">Any topic</option></select>
+          </div>
+          <div class="form-group">
+            <label>Cognitive skill pattern</label>
+            <select id="gen-pattern"><option value="">Any pattern</option></select>
+          </div>
+          <div class="form-group">
+            <label>Difficulty (1–5)</label>
+            <div class="diff-range">
+              <input type="range" min="1" max="5" value="3" id="gen-diff"
+                oninput="document.getElementById('gen-diff-val').textContent=this.value; updateGenPreview()">
+              <span id="gen-diff-val">3</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Age range</label>
+            <select id="gen-age">
+              <option value="">Any</option>
+              <option value="Primary">Primary (5–11)</option>
+              <option value="Secondary">Secondary / GCSE</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Number of questions</label>
+            <select id="gen-count">
+              <option value="5">5</option>
+              <option value="10" selected>10</option>
+              <option value="15">15</option>
+              <option value="20">20</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Sheet title</label>
+            <input type="text" id="gen-title" class="text-input" placeholder="e.g. Year 7 Fractions Practice">
+          </div>
+        </div>
+        <div class="gen-stats" id="gen-stats"></div>
+        <div class="gen-preview" id="gen-preview">
+          <h4>Matching questions preview</h4>
+          <div class="gen-q-list" id="gen-q-list"><p class="no-match">Adjust filters to find questions</p></div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="exportPDF()">Export as PDF</button>
+          <button class="btn" onclick="updateGenPreview()">Refresh preview</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS TAB -->
+    <div id="tab-settings" style="display:none">
+      <div class="gen-card">
+        <p class="section-title">API configuration</p>
+        <p class="settings-desc">Enter your Firebase and Anthropic credentials. These are saved in your browser only and never sent anywhere except to the respective APIs.</p>
+        <div class="settings-grid">
+          <div class="form-group">
+            <label>Firebase API Key</label>
+            <input type="text" id="s-apiKey" class="text-input mono" placeholder="AIza...">
+          </div>
+          <div class="form-group">
+            <label>Firebase Auth Domain</label>
+            <input type="text" id="s-authDomain" class="text-input mono" placeholder="your-project.firebaseapp.com">
+          </div>
+          <div class="form-group">
+            <label>Firebase Project ID</label>
+            <input type="text" id="s-projectId" class="text-input mono" placeholder="your-project-id">
+          </div>
+          <div class="form-group">
+            <label>Anthropic API Key</label>
+            <input type="password" id="s-anthropicKey" class="text-input mono" placeholder="sk-ant-...">
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="saveSettings()" style="margin-bottom:32px">Save &amp; connect</button>
+
+        <div class="settings-divider"></div>
+        <p class="section-title" style="margin-top:24px">Topic management</p>
+        <div id="topic-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"></div>
+        <div style="display:flex;gap:8px">
+          <input type="text" id="new-topic-input" class="text-input" placeholder="Add new topic..." style="max-width:280px">
+          <button class="btn btn-primary btn-sm" onclick="addTopicFromSettings()">Add topic</button>
+        </div>
+
+        <div class="settings-divider" style="margin-top:24px"></div>
+        <p class="section-title" style="margin-top:24px">Danger zone</p>
+        <button class="btn btn-danger" onclick="clearAllData()">Clear all local data</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- TOPIC CONFIRMATION MODAL -->
+<div class="modal-overlay" id="topic-modal" style="display:none">
+  <div class="confirm-modal">
+    <h3>Confirm topic assignment</h3>
+    <p class="modal-sub">The AI is less than 70% confident about this question's topic. Please confirm or choose a different one.</p>
+    <div class="question-preview" id="modal-q-preview"></div>
+    <div id="modal-ai-suggestion"></div>
+    <p class="form-label" style="margin-bottom:8px">Or choose an existing topic</p>
+    <div class="topics-grid" id="modal-topics-grid"></div>
+    <p class="form-label" style="margin:12px 0 8px">Or add a new topic</p>
+    <div class="new-topic-row">
+      <input type="text" id="modal-new-topic" class="text-input" placeholder="Type new topic name...">
+      <button class="btn btn-sm" onclick="confirmNewTopic()">Add</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="confirmTopicChoice()">Confirm selection</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script src="app.js" type="module"></script>
+</body>
+</html>
