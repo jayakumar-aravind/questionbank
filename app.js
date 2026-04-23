@@ -369,14 +369,13 @@ async function extractContent(file) {
       text += content.items.map(item => item.str).join(' ') + '\n';
     }
 
-    // If text is too sparse, it's likely a scanned PDF — render ALL pages and stitch into one image
+    // If text is too sparse, it's likely a scanned PDF — render pages in batches under 4MB each
     if (text.replace(/\s/g, '').length < 80) {
-      const scale = 2.0;
-      const pageCanvases = [];
-      let totalHeight = 0;
-      let maxWidth = 0;
+      const scale = 1.5;
+      const MAX_BYTES = 4 * 1024 * 1024; // 4MB safe limit per API call
 
       // Render every page to its own canvas
+      const pageCanvases = [];
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const viewport = page.getViewport({ scale });
@@ -385,23 +384,39 @@ async function extractContent(file) {
         canvas.height = viewport.height;
         await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
         pageCanvases.push(canvas);
-        totalHeight += viewport.height;
-        if (viewport.width > maxWidth) maxWidth = viewport.width;
       }
 
-      // Stitch all pages into one tall canvas
-      const stitched = document.createElement('canvas');
-      stitched.width = maxWidth;
-      stitched.height = totalHeight;
-      const ctx = stitched.getContext('2d');
-      let yOffset = 0;
-      for (const c of pageCanvases) {
-        ctx.drawImage(c, 0, yOffset);
-        yOffset += c.height;
-      }
+      // Group pages into batches that fit under 4MB when stitched
+      const batches = [];
+      let batchCanvases = [];
+      let batchBytes = 0;
 
-      const base64 = stitched.toDataURL('image/jpeg', 0.85).split(',')[1];
-      return { type: 'image', data: base64, mimeType: 'image/jpeg' };
+      for (const canvas of pageCanvases) {
+        const bytes = canvas.toDataURL('image/jpeg', 0.82).length * 0.75;
+        if (batchBytes + bytes > MAX_BYTES && batchCanvases.length > 0) {
+          batches.push(batchCanvases);
+          batchCanvases = [];
+          batchBytes = 0;
+        }
+        batchCanvases.push(canvas);
+        batchBytes += bytes;
+      }
+      if (batchCanvases.length > 0) batches.push(batchCanvases);
+
+      // Stitch each batch into one image
+      const images = batches.map(batch => {
+        const maxWidth = Math.max(...batch.map(c => c.width));
+        const totalHeight = batch.reduce((sum, c) => sum + c.height, 0);
+        const stitched = document.createElement('canvas');
+        stitched.width = maxWidth;
+        stitched.height = totalHeight;
+        const ctx = stitched.getContext('2d');
+        let y = 0;
+        for (const c of batch) { ctx.drawImage(c, 0, y); y += c.height; }
+        return { type: 'image', data: stitched.toDataURL('image/jpeg', 0.82).split(',')[1], mimeType: 'image/jpeg' };
+      });
+
+      return { type: 'multiImage', images };
     }
 
     return { type: 'text', data: text };
@@ -474,47 +489,54 @@ Example output:
   }
 ]`;
 
-  let messages;
+  // Helper to call API for a single content block
+  async function callOnce(msgContent) {
+    const response = await fetch('https://anthropic-proxy.jayakumar-aravind.workers.dev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: msgContent }]
+      })
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(`API error ${response.status}: ${err.error?.message || 'Unknown error'}`);
+    }
+    const data = await response.json();
+    const text = data.content?.find(b => b.type === 'text')?.text || '[]';
+    const clean = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+    return JSON.parse(clean);
+  }
+
+  // For multi-image batches, call API per batch and merge results
+  if (content.type === 'multiImage') {
+    const allQuestions = [];
+    for (const img of content.images) {
+      const msgContent = [
+        { type: 'image', source: { type: 'base64', media_type: img.mimeType, data: img.data } },
+        { type: 'text', text: 'Extract all maths questions from this worksheet page. Ignore all student workings and answers.' }
+      ];
+      const batch = await callOnce(msgContent);
+      allQuestions.push(...batch);
+    }
+    return allQuestions;
+  }
+
+  let msgContent;
   if (content.type === 'image') {
-    messages = [{
-      role: 'user',
-      content: [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: content.mimeType, data: content.data }
-        },
-        {
-          type: 'text',
-          text: 'Extract all maths questions from this worksheet. Ignore all student workings and answers.'
-        }
-      ]
-    }];
+    msgContent = [
+      { type: 'image', source: { type: 'base64', media_type: content.mimeType, data: content.data } },
+      { type: 'text', text: 'Extract all maths questions from this worksheet. Ignore all student workings and answers.' }
+    ];
   } else {
-    messages = [{ role: 'user', content: content.data }];
+    msgContent = content.data;
   }
-
-  const response = await fetch('https://anthropic-proxy.jayakumar-aravind.workers.dev', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages
-    })
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(`API error ${response.status}: ${err.error?.message || 'Unknown error'}`);
-  }
-
-  const data = await response.json();
-  const text = data.content?.find(b => b.type === 'text')?.text || '[]';
-  const clean = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
 
   try {
-    return JSON.parse(clean);
+    return await callOnce(msgContent);
   } catch(e) {
     throw new Error('AI returned invalid data. Please try again.');
   }
