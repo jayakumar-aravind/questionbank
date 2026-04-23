@@ -371,7 +371,7 @@ async function extractContent(file) {
 
     // If text is too sparse, it's likely a scanned PDF — render pages in batches under 4MB each
     if (text.replace(/\s/g, '').length < 80) {
-      const scale = 1.5;
+      const scale = 1.2;
       const MAX_BYTES = 4 * 1024 * 1024; // 4MB safe limit per API call
 
       // Render every page to its own canvas
@@ -462,103 +462,22 @@ async function callClaudeAPI(content, filename) {
   const topicList = topics.join(', ');
   const patternList = PATTERNS.join(', ');
 
-  const systemPrompt = `You are a maths question extraction assistant for UK primary and secondary school teachers following the England National Curriculum.
+  const systemPrompt = `You extract maths questions from UK school worksheets (England National Curriculum). Ignore all student workings, answers, and annotations.
 
-Extract ALL maths questions from the provided content.
+For each question return JSON with:
+- question: full text including all parts (a)(b)(c) as one entry
+- answer: compute independently, show brief working
+- topic: best match from [${topicList}]
+- topicConfidence: 0-100
+- pattern: best match from [${patternList}] where: "Applying a Formula"=substitute into formula; "Multi-step Reasoning"=chain 2+ operations; "Interpreting Context"=real-world scenario; "Spotting Errors"=find mistake; "Recall & Retrieval"=facts/definitions/recognition; "Estimation & Checking"=approximate/verify; "Spatial Reasoning"=shapes/angles/symmetry; "Data Interpretation"=graphs/tables; "Proof & Justification"=explain why
+- difficulty: 1=KS1(ages 5-7) 2=KS2(ages 7-11) 3=KS3(ages 11-14) 4=GCSE Foundation 5=GCSE Higher
+- ageRange: "Primary" if difficulty 1-2, "Secondary" if difficulty 3-5
 
-CRITICAL RULES:
-- IGNORE all student handwriting, student answers, student workings, crossed-out text, and any marks or annotations that appear to be student responses
-- IGNORE printed answer lines, mark schemes, or grading boxes
-- Only extract the printed/typed questions as they were originally set
+TOPIC RULES: Base topic on mathematical content not question style. Square numbers/primes/number properties with no algebra = "Number" not "Algebra". "Proof & Justification" is a pattern not a topic.
 
-For EACH question you find, return these fields:
+AGE RANGE RULES: The sqrt symbol alone does NOT mean Secondary. If answerable using basic square number facts (sqrt(81)=9) it is Primary. "Show with examples" = Primary. "Prove algebraically for all cases" = Secondary. Doubling/halving/square numbers within 100/times tables = always Primary.
 
-1. "question": Full question text including all parts (a), (b), (c) etc - keep together as ONE entry
-
-2. "answer": Compute the correct answer yourself independently. Show brief working where helpful.
-
-3. "topic": Choose the single best topic from: ${topicList}
-   Topic selection rules:
-   - Base the topic on the MATHEMATICAL CONTENT being tested, not the style of question
-   - "Number" covers: arithmetic, place value, square numbers, cube numbers, primes, factors, multiples, odd/even, consecutive numbers, number properties, integers
-   - "Algebra" covers: expressions with unknowns (x, y, n), forming or solving equations, expanding brackets, factorising, sequences defined algebraically
-   - A question about square numbers, primes, or number patterns with NO algebraic notation = "Number", NOT "Algebra"
-   - A question asking to "show", "prove", or "explain" about number properties = topic is determined by the number property involved, not the word "prove"
-   - "Proof & Justification" is a PATTERN not a topic — a proof question about square numbers is topic "Number", pattern "Proof & Justification"
-   - "Geometry & Measures" covers: angles, perimeter, area, volume, coordinates, transformations
-   - "Shape & Space" covers: properties of 2D/3D shapes, symmetry, nets
-   - "Fractions & Decimals" and "Percentages" are separate from "Number" — use them when the question is primarily about fractions, decimals or percentages
-
-4. "topicConfidence": Your confidence in the topic assignment as a percentage (0-100)
-
-5. "pattern": Choose the single best cognitive skill pattern from: ${patternList}
-   - Applying a Formula: substitute values into a known formula (area, speed, etc.)
-   - Multi-step Reasoning: requires chaining 2+ operations to reach an answer
-   - Interpreting Context: extract and translate a real-world scenario into maths
-   - Spotting Errors: identify a mistake in given working or a statement
-   - Recall & Retrieval: direct knowledge recall - times tables, number facts, definitions, recognising properties
-   - Estimation & Checking: approximate or verify reasonableness of an answer
-   - Spatial Reasoning: visualise or manipulate shapes, angles, symmetry, transformations
-   - Data Interpretation: read and extract values from graphs, tables, tally charts
-   - Proof & Justification: explain or show why something is mathematically true
-
-6. "difficulty": Rate 1-5 using ONLY these definitions:
-   1 = KS1 (Years 1-2, ages 5-7): counting, basic addition/subtraction within 20, simple shapes
-   2 = KS2 (Years 3-6, ages 7-11): times tables, column arithmetic, fractions, area of simple shapes, place value, square numbers, doubling/halving, basic number properties
-   3 = KS3 (Years 7-9, ages 11-14): algebra basics, negative numbers, ratio, percentages, angles in shapes, plotting graphs, probability
-   4 = GCSE Foundation (ages 14-16): simultaneous equations, quadratics intro, trigonometry basics, cumulative frequency, standard form
-   5 = GCSE Higher (ages 14-16): proof, circle theorems, vectors, surds, inverse functions, complex transformations
-
-7. "ageRange": Assign using these STRICT rules based on mathematical content only:
-   - "Primary" if difficulty is 1 or 2
-   - "Secondary" if difficulty is 3, 4, or 5
-   - Base this on the MATHEMATICAL CONTENT, NOT the appearance of the worksheet
-   - Questions about doubling, halving, square numbers within 100, times tables, basic arithmetic, simple fractions = ALWAYS Primary
-   - Questions requiring algebra, formal equations, secondary curriculum concepts = ALWAYS Secondary
-
-PRIMARY examples (difficulty 1-2, ageRange = "Primary"):
-- "Circle the number that is double a square number: 12 14 16 18" -> difficulty 2, Primary (recognising square numbers is KS2)
-- "What is 7 x 8?" -> difficulty 1, Primary
-- "Find the area of a rectangle 4cm x 6cm" -> difficulty 2, Primary
-- "Write these fractions in order: 1/2, 1/4, 3/4" -> difficulty 2, Primary
-
-SECONDARY examples (difficulty 3-5, ageRange = "Secondary"):
-- "Solve 3x + 7 = 22" -> difficulty 3, Secondary
-- "Find the nth term of the sequence 5, 8, 11, 14" -> difficulty 3, Secondary
-- "Calculate the area of a circle with radius 5cm" -> difficulty 3, Secondary
-
-Respond ONLY with a valid JSON array. No markdown fences, no preamble, no explanation outside the JSON.
-
-Example output:
-[
-  {
-    "question": "Circle the number that is double a square number.\n12  14  16  18",
-    "answer": "18 (square numbers: 1,4,9,16,25... double of 9 = 18)",
-    "topic": "Number",
-    "topicConfidence": 95,
-    "pattern": "Recall & Retrieval",
-    "difficulty": 2,
-    "ageRange": "Primary"
-  },
-  {
-    "question": "Ben says: the difference between two consecutive square numbers is always odd. Is Ben correct? Show your workings.",
-    "answer": "Yes. Consecutive square numbers: n² and (n+1)². Difference = (n+1)² - n² = 2n+1, which is always odd. E.g. 9-4=5, 16-9=7, 25-16=9.",
-    "topic": "Number",
-    "topicConfidence": 90,
-    "pattern": "Proof & Justification",
-    "difficulty": 3,
-    "ageRange": "Secondary"
-  },
-  {
-    "question": "Solve for x:\n(a) 3x + 7 = 22\n(b) 5x - 3 = 2x + 9",
-    "answer": "(a) x = 5 [3x = 15, x = 5]\n(b) x = 4 [3x = 12, x = 4]",
-    "topic": "Equations & Inequalities",
-    "topicConfidence": 98,
-    "pattern": "Applying a Formula",
-    "difficulty": 3,
-    "ageRange": "Secondary"
-  }
-]`;
+Respond ONLY with a valid JSON array, no markdown.`;
 
   // Helper to call API for a single content block
   async function callOnce(msgContent) {
@@ -567,7 +486,7 @@ Example output:
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 4096,
+        max_tokens: 2048,
         system: systemPrompt,
         messages: [{ role: 'user', content: msgContent }]
       })
