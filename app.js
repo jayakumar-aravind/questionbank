@@ -269,7 +269,13 @@ async function processFile(file) {
     }
 
     setProcessingStep(4, 90);
+    let savedCount = 0;
+    let skippedCount = 0;
     for (const q of extracted) {
+      if (isDuplicate(q.question)) {
+        skippedCount++;
+        continue;
+      }
       const record = {
         question: q.question,
         answer: q.answer,
@@ -278,16 +284,19 @@ async function processFile(file) {
         difficulty: q.difficulty,
         ageRange: q.ageRange,
         sourceFile: file.name,
-        dateAdded: new Date().toISOString()
+        dateAdded: new Date().toISOString(),
+        fingerprint: fingerprint(q.question)
       };
       const firebaseId = await saveQuestionToFirebase(record);
       record.id = firebaseId || `local_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       questions.unshift(record);
+      savedCount++;
     }
 
     saveLocalQuestions();
     setProgress(100);
 
+    const skipMsg = skippedCount > 0 ? ` (${skippedCount} duplicate${skippedCount > 1 ? 's' : ''} skipped)` : '';
     area.innerHTML = `
       <div class="processing-card success">
         <div class="processing-header">
@@ -296,7 +305,7 @@ async function processFile(file) {
               <path stroke-linecap="round" stroke-linejoin="round" d="M2 6l3 3 5-5"/>
             </svg>
           </div>
-          <strong>${extracted.length} question${extracted.length !== 1 ? 's' : ''} added from ${escapeHtml(file.name)}</strong>
+          <strong>${savedCount} question${savedCount !== 1 ? 's' : ''} added from ${escapeHtml(file.name)}${skipMsg}</strong>
           <button class="btn btn-sm btn-primary" style="margin-left:auto" onclick="showTab('bank')">View in bank →</button>
         </div>
       </div>`;
@@ -360,15 +369,38 @@ async function extractContent(file) {
       text += content.items.map(item => item.str).join(' ') + '\n';
     }
 
-    // If text is too sparse, it's likely a scanned PDF — render first page as image
+    // If text is too sparse, it's likely a scanned PDF — render ALL pages and stitch into one image
     if (text.replace(/\s/g, '').length < 80) {
-      const page = await pdf.getPage(1);
-      const viewport = page.getViewport({ scale: 2.0 });
-      const canvas = document.createElement('canvas');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-      const base64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+      const scale = 2.0;
+      const pageCanvases = [];
+      let totalHeight = 0;
+      let maxWidth = 0;
+
+      // Render every page to its own canvas
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        pageCanvases.push(canvas);
+        totalHeight += viewport.height;
+        if (viewport.width > maxWidth) maxWidth = viewport.width;
+      }
+
+      // Stitch all pages into one tall canvas
+      const stitched = document.createElement('canvas');
+      stitched.width = maxWidth;
+      stitched.height = totalHeight;
+      const ctx = stitched.getContext('2d');
+      let yOffset = 0;
+      for (const c of pageCanvases) {
+        ctx.drawImage(c, 0, yOffset);
+        yOffset += c.height;
+      }
+
+      const base64 = stitched.toDataURL('image/jpeg', 0.85).split(',')[1];
       return { type: 'image', data: base64, mimeType: 'image/jpeg' };
     }
 
@@ -827,6 +859,22 @@ window.showToast = function(msg, type = '') {
   document.getElementById('toast-container')?.appendChild(el);
   setTimeout(() => el.remove(), 3500);
 };
+
+// Generate a simple fingerprint from question text for duplicate detection
+function fingerprint(text) {
+  const clean = text.toLowerCase().replace(/\s+/g, ' ').trim();
+  let hash = 0;
+  for (let i = 0; i < clean.length; i++) {
+    hash = ((hash << 5) - hash) + clean.charCodeAt(i);
+    hash |= 0;
+  }
+  return String(Math.abs(hash));
+}
+
+function isDuplicate(questionText) {
+  const fp = fingerprint(questionText);
+  return questions.some(q => q.fingerprint === fp);
+}
 
 function escapeHtml(str) {
   if (!str) return '';
